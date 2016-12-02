@@ -1,6 +1,6 @@
-FROM openjdk:8-jdk
+FROM sjatgutzmann/docker.centos.oraclejava8
 
-RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
+RUN yum -y install git curl
 
 ENV JENKINS_HOME /var/jenkins_home
 ENV JENKINS_SLAVE_AGENT_PORT 50000
