@@ -1,0 +1,171 @@
+#!/usr/bin/env groovy
+node {
+
+   def mvnHome
+   /** Should be the repository name of the project without .git. 
+   in the future it should be come from the environment of jenkins
+   */
+   def DISPLAY_NAME = "gitprojectname"
+   
+   def changeUser = env.CHANGE_AUTHOR
+   
+   
+   stage('Preparation') { // for display purposes
+         sh 'env > env.txt'
+        for(String  envtext : readFile('env.txt').split("\r?\n")) {
+        println envtext
+      }
+      
+      // another error
+      // https://issues.jenkins-ci.org/browse/JENKINS-36578
+      println env.JOB_NAME
+      def displayname = getDisplayName()
+      if(displayname) {
+        DISPLAY_NAME = displayname
+      }
+      println "DISPLAY_NAME:${DISPLAY_NAME}" 
+       // Get some code from a GitHub repository
+      // git("ssh://jenkins@git:29418/${DISPLAY_NAME}.git")
+      // Get the Maven tool.
+      // ** NOTE: This 'M3' Maven tool must be configured
+      // **       in the global configuration.           
+      mvnHome = tool 'M3'
+      echo "changeUser: ${changeUser}"
+      if(! changeUser?.trim()) {
+          echo "change changeUser to default"
+          // this default user should have RW access to the Repository
+          changeUser="sjatgutzmann"
+          echo changeUser
+      }
+      
+   
+   }
+   stage('Checkout') {
+       checkout scm
+   }
+   stage('Build') {
+      // Run the maven build
+      try {
+          if (isUnix()) {
+             sh "'${mvnHome}/bin/mvn' -Dadditionalparam=-Xdoclint:none -Dmaven.test.failure.ignore clean package "
+          } else {
+             bat(/"${mvnHome}\bin\mvn" -Dadditionalparam=-Xdoclint:none -Dmaven.test.failure.ignore clean package/)
+          }
+      }
+      catch (e) {
+		  println("catching error for post doning")
+		  error(makeGitBlitTicket(DISPLAY_NAME, changeUser, 'Build', e))
+      }
+   }
+   
+  stage('UnitTest') {
+      try {
+          if (isUnix()) {
+             sh "'${mvnHome}/bin/mvn' -Dadditionalparam=-Xdoclint:none test "
+          } else {
+             bat(/"${mvnHome}\bin\mvn" -Dadditionalparam=-Xdoclint:none test/)
+          }
+      }
+      catch (e) {
+		  println("catching error for post doning")
+		  error(makeGitBlitTicket(DISPLAY_NAME, changeUser, 'UnitTest', e))
+      }
+        
+  }
+  
+  stage('CodeCoverage') {
+	  sh "'${mvnHome}/bin/mvn' jacoco:prepare-agent test jacoco:report"
+  }
+     
+  stage('SonarQube analysis') {
+      sh "'${mvnHome}/bin/mvn' -Dsonar.branch=${env.BRANCH_NAME} org.sonarsource.scanner.maven:sonar-maven-plugin:3.2:sonar"
+  }
+   stage('Results') {
+      junit '**/target/surefire-reports/TEST-*.xml'
+      archive 'target/*.jar'
+   }
+}
+
+@NonCPS
+def getTicketId(text, DISPLAY_NAME) {
+  def matcher = text =~ /tickets\?r=${DISPLAY_NAME}\.git&h=(.+)/
+  if(matcher.find()) {
+        return matcher.group(1)
+  }
+  return null
+}
+
+@NonCPS
+def getDisplayName() {
+    def rueck = null
+    def m = env.JOB_NAME =~ /^([\w-]+)\s+.*$/
+    if (m) {
+      rueck = m.group(1)
+    }
+      
+    return rueck
+}
+
+@NonCPS
+def isGitBlitTicket(branchname) {
+	// TODO: use bugtraq config
+	def rueck = false
+	if(branchname) {
+		println "is branch $branchname a gitblit ticket branch?"
+        // http://mrhaki.blogspot.de/2009/09/groovy-goodness-matchers-for-regular.html
+		rueck = (branchname ==~ /^ticket\/\d+/)
+		if(rueck) {
+			println "yes"
+		} else {
+            println "no"
+        }
+	}
+	return rueck
+}
+
+def makeGitBlitTicket(DISPLAY_NAME, changeUser, reason, e) {
+			String errorText = null
+			// don't create tickets on tickets
+			if(!isGitBlitTicket(env.BRANCH_NAME)) {
+				String localBranchName = "jenkinsbuild-${env.BRANCH_NAME}-${env.BUILD_ID}"
+	            sh "git checkout -b ${localBranchName}"
+	            //...add a single commit...
+	            // log file would be nice, but:
+	            // https://issues.jenkins-ci.org/browse/JENKINS-28119
+	            writeFile(file:'.jenkinserror', text:"Build " + env.JOB_URL + env.BUILD_ID + "\n" + e.toString())
+	            sh "git add .jenkinserror"
+	            sh "git commit -m \"" + createComment(reason) + "\" .jenkinserror"
+	            // workaround https://issues.jenkins-ci.org/browse/JENKINS-26133
+	            // http://gitblit.com/tickets_using.html
+				// by default jenkins use bash with option -xe. To prevent this, just begin with the interpreter row 
+	            def rueck = sh(script:"#!/bin/bash \n git push ssh://jenkins@git:29418/${DISPLAY_NAME}.git HEAD:refs/for/${env.BRANCH_NAME}%t=${env.BRANCH_NAME},r=${changeUser},cc=jenkins 2>&1 ", returnStdout:true).trim()
+	            // read ticket id from stdout. use NonCPS function, because regex arn't serializable
+	            def id = getTicketId(rueck, DISPLAY_NAME)
+	            if(id) {
+	                println "create new ticket on gitblit with the id ${id}"
+	                sh "git fetch"
+	                sh "git branch -u origin/ticket/${id}"
+	                sh "git branch -M ${localBranchName} ticket/${id}"
+					errorText = "Stage ${reason} faild! Jenkins has created new ticket on gitblit with the id ${id}. Use this branch to fix it."
+	            } else {
+	                errorText ="Could not get Ticket Id from gitblit with rueck=${rueck} | and DISPLAY_NAME:${DISPLAY_NAME}"
+	            }
+			} else {// no ticket branch
+				errorText = "Stage ${reason} faild! Please fix ${env.BRANCH_NAME} on gitblit by using this branch."
+			}
+			return errorText
+
+}
+
+
+def createComment(reason) {
+	def prefix = "jenkins report"
+	if(isGitBlitTicket(env.BRANCH_NAME)) {
+		prefix = env.BRANCH_NAME 
+	}
+    String title = "${prefix} error stage ${reason} with build ${env.BRANCH_NAME}/${env.BUILD_ID}"
+    if(title.length() > 100) {
+        title = "${prefix}"
+    }
+    return title
+}

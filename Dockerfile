@@ -1,4 +1,4 @@
-FROM sjatgutzmann/docker.centos.oraclejava8
+FROM sjatgutzmann/docker.centos.javadev8
 
 RUN yum -y install git curl
 
@@ -61,6 +61,19 @@ EXPOSE 50000
 ENV COPY_REFERENCE_FILE_LOG $JENKINS_HOME/copy_reference_file.log
 
 USER ${user}
+
+#accept unsign ssl certificates with git, default user
+RUN git config --global http.sslVerify false \
+	&& git config --global user.email "jenkins@localhost" \
+	&& git config --global user.name "jenkins"
+
+# attention: ssh key without passphrase
+COPY sshkeys.sh ${JENKINS_HOME}/sshkeys.sh
+RUN $JENKINS_HOME/sshkeys.sh
+
+# maven config
+RUN mkdir ${JENKINS_HOME}/.m2
+COPY mvn/settings.xml ${JENKINS_HOME}/.m2/settings.xml
 
 COPY jenkins-support /usr/local/bin/jenkins-support
 COPY jenkins.sh /usr/local/bin/jenkins.sh
