@@ -2,10 +2,9 @@
 
 The Jenkins Continuous Integration and Delivery server.
 
-This is a fully functional Jenkins server, based on the Long Term Support release.
+This is a fully functional Jenkins server.
 [http://jenkins.io/](http://jenkins.io/).
 
-For weekly releases check out [`jenkinsci/jenkins`](https://hub.docker.com/r/jenkinsci/jenkins/)
 
 
 <img src="http://jenkins-ci.org/sites/default/files/jenkins_logo.png"/>
@@ -14,16 +13,14 @@ For weekly releases check out [`jenkinsci/jenkins`](https://hub.docker.com/r/jen
 # Usage
 
 ```
-docker run -p 8080:8080 -p 50000:50000 jenkins
+docker run -p 8080:8080 -p 50000:50000 
 ```
 
-NOTE: read below the _build executors_ part for the role of the `50000` port mapping.
-
-This will store the workspace in /var/jenkins_home. All Jenkins data lives in there - including plugins and configuration.
+This will store the workspace in /var/lib/jenkins/. All Jenkins data lives in there - including plugins and configuration.
 You will probably want to make that an explicit volume so you can manage it and attach to another container for upgrades :
 
 ```
-docker run -p 8080:8080 -p 50000:50000 -v jenkins_home:/var/jenkins_home jenkins
+docker run -p 8080:8080 -p 50000:50000 -v jenkins_home:/var/lib/jenkins/ jenkins
 ```
 
 this will automatically create a 'jenkins_home' volume on docker host, that will survive container stop/restart/deletion. 
@@ -37,114 +34,12 @@ If you bind mount in a volume - you can simply back up that directory
 
 This is highly recommended. Treat the jenkins_home directory as you would a database - in Docker you would generally put a database on a volume.
 
-If your volume is inside a container - you can use ```docker cp $ID:/var/jenkins_home``` command to extract the data, or other options to find where the volume data is.
+If your volume is inside a container - you can use ```docker cp $ID:/var/lib/jenkins/``` command to extract the data, or other options to find where the volume data is.
 Note that some symlinks on some OSes may be converted to copies (this can confuse jenkins with lastStableBuild links etc)
 
 For more info check Docker docs section on [Managing data in containers](https://docs.docker.com/engine/tutorials/dockervolumes/)
 
-# Setting the number of executors
 
-You can specify and set the number of executors of your Jenkins master instance using a groovy script. By default its set to 2 executors, but you can extend the image and change it to your desired number of executors :
-
-`executors.groovy`
-```
-import jenkins.model.*
-Jenkins.instance.setNumExecutors(5)
-```
-
-and `Dockerfile`
-
-```
-FROM jenkins
-COPY executors.groovy /usr/share/jenkins/ref/init.groovy.d/executors.groovy
-```
-
-
-# Attaching build executors
-
-You can run builds on the master out of the box.
-
-But if you want to attach build slave servers **through JNLP (Java Web Start)**: make sure you map the port: ```-p 50000:50000``` - which will be used when you connect a slave agent.
-
-If you are only using [SSH slaves](https://wiki.jenkins-ci.org/display/JENKINS/SSH+Slaves+plugin), then you do **NOT** need to put that port mapping.
-
-# Passing JVM parameters
-
-You might need to customize the JVM running Jenkins, typically to pass system properties or tweak heap memory settings. Use JAVA_OPTS environment
-variable for this purpose :
-
-```
-docker run --name myjenkins -p 8080:8080 -p 50000:50000 --env JAVA_OPTS=-Dhudson.footerURL=http://mycompany.com jenkins
-```
-
-# Configuring logging
-
-Jenkins logging can be configured through a properties file and `java.util.logging.config.file` Java property.
-For example:
-
-```
-mkdir data
-cat > data/log.properties <<EOF
-handlers=java.util.logging.ConsoleHandler
-jenkins.level=FINEST
-java.util.logging.ConsoleHandler.level=FINEST
-EOF
-docker run --name myjenkins -p 8080:8080 -p 50000:50000 --env JAVA_OPTS="-Djava.util.logging.config.file=/var/jenkins_home/log.properties" -v `pwd`/data:/var/jenkins_home jenkins
-```
-
-
-# Passing Jenkins launcher parameters
-
-Argument you pass to docker running the jenkins image are passed to jenkins launcher, so you can run for sample :
-```
-docker run jenkins --version
-```
-This will dump Jenkins version, just like when you run jenkins as an executable war.
-
-You also can define jenkins arguments as `JENKINS_OPTS`. This is usefull to define a set of arguments to pass to jenkins launcher as you
-define a derived jenkins image based on the official one with some customized settings. The following sample Dockerfile uses this option
-to force use of HTTPS with a certificate included in the image
-
-```
-FROM jenkins:1.565.3
-
-COPY https.pem /var/lib/jenkins/cert
-COPY https.key /var/lib/jenkins/pk
-ENV JENKINS_OPTS --httpPort=-1 --httpsPort=8083 --httpsCertificate=/var/lib/jenkins/cert --httpsPrivateKey=/var/lib/jenkins/pk
-EXPOSE 8083
-```
-
-You can also change the default slave agent port for jenkins by defining `JENKINS_SLAVE_AGENT_PORT` in a sample Dockerfile.
-
-```
-FROM jenkins:1.565.3
-ENV JENKINS_SLAVE_AGENT_PORT 50001
-```
-or as a parameter to docker,
-```
-docker run --name myjenkins -p 8080:8080 -p 50001:50001 --env JENKINS_SLAVE_AGENT_PORT=50001 jenkins
-```
-
-# Installing more tools
-
-You can run your container as root - and install via apt-get, install as part of build steps via jenkins tool installers, or you can create your own Dockerfile to customise, for example:
-
-```
-FROM jenkins
-# if we want to install via apt
-USER root
-RUN apt-get update && apt-get install -y ruby make more-thing-here
-USER jenkins # drop back to the regular jenkins user - good practice
-```
-
-In such a derived image, you can customize your jenkins instance with hook scripts or additional plugins.
-For this purpose, use `/usr/share/jenkins/ref` as a place to define the default JENKINS_HOME content you
-wish the target installation to look like :
-
-```
-FROM jenkins
-COPY custom.groovy /usr/share/jenkins/ref/init.groovy.d/custom.groovy
-```
 
 ## Preinstalling plugins
 
@@ -210,12 +105,11 @@ Build with the usual
 
     docker build -t jenkins .
 
+# Test
+Ignore this section
 Tests are written using [bats](https://github.com/sstephenson/bats) under the `tests` dir
 
     bats tests
 
 Bats can be easily installed with `brew install bats` on OS X
 
-# Questions?
-
-Jump on irc.freenode.net and the #jenkins room. Ask!
